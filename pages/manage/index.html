@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SCP:SL 查询管理</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <h1>SCP:SL 查询管理</h1>
+    <nav id="tabs">
+      <button data-tab="servers" class="active">服务器</button>
+      <button data-tab="admins">管理员</button>
+      <button data-tab="bg">背景与出图</button>
+      <button data-tab="quotes">语录</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 服务器 -->
+    <section id="tab-servers">
+      <div class="card">
+        <h2>从 scplist.kr 找服务器</h2>
+        <p class="hint">输入名称关键词（例如 沈阳）搜索在线服务器，点「填入」会把 ID 填到下面的表单。A2S 在你的服务器上连不通时，用 scplist ID 最稳。</p>
+        <div class="form inline">
+          <input id="sl-kw" placeholder="名称关键词" />
+          <button id="sl-search" class="primary">搜索</button>
+        </div>
+        <ul id="sl-results" class="list"></ul>
+      </div>
+
+      <div class="card">
+        <h2>添加 / 更新服务器</h2>
+        <p class="hint">服务器按群隔离。群标识写 <code>平台:群号</code>，只写群号时默认 <code>aiocqhttp:</code>。同群同名再次保存会更新 IP 和端口。</p>
+        <div class="form">
+          <label>群<input id="s-scope" list="scope-list" placeholder="例如 123456789" inputmode="text" /></label>
+          <datalist id="scope-list"></datalist>
+          <label>服务器名<input id="s-name" placeholder="一号服（不含空格）" maxlength="32" /></label>
+          <label>类型
+            <select id="s-kind"><option value="sl">SCP:SL（scplist ID 或 A2S）</option><option value="mc">Minecraft Java 版</option></select>
+          </label>
+          <label id="sid-wrap">scplist 服务器 ID（填了就走 scplist）<input id="s-sid" placeholder="例如 12345" inputmode="numeric" /></label>
+          <p class="hint" id="addr-hint">或者用 A2S（UDP，需要服务器能连通）：</p>
+          <div class="row2">
+            <label>IP / 域名<input id="s-host" placeholder="192.0.2.10" /></label>
+            <label><span id="port-label">A2S 端口</span><input id="s-port" placeholder="7777" inputmode="numeric" /></label>
+          </div>
+          <div class="btns">
+            <button id="s-test" class="ghost">测试连接</button>
+            <button id="s-save" class="primary">保存</button>
+          </div>
+          <div id="s-test-result" class="hint"></div>
+        </div>
+      </div>
+      <div id="server-groups"></div>
+    </section>
+
+    <!-- 管理员 -->
+    <section id="tab-admins" hidden>
+      <div class="card">
+        <h2>管理员</h2>
+        <p class="hint">管理员全局共用，可使用 /bind /unbind /bindlist /op。格式 <code>平台:用户ID</code>，只写 QQ 号时默认 <code>aiocqhttp:</code>。在这里添加不受“首位管理员”限制。</p>
+        <div class="form inline">
+          <input id="a-uid" placeholder="例如 123456789" inputmode="text" />
+          <button id="a-add" class="primary">添加</button>
+        </div>
+        <ul id="admin-list" class="list"></ul>
+      </div>
+    </section>
+
+    <!-- 语录 -->
+    <section id="tab-quotes" hidden>
+      <div class="card">
+        <h2>随机语录</h2>
+        <p class="hint">每次 <code>/cx</code> 出图时随机抽一条显示在标题下方。共 <b id="q-count">0</b> 条（上限 5000，单条 ≤ 200 字）。</p>
+        <div class="form inline">
+          <input id="q-text" placeholder="输入一条语录" maxlength="200" />
+          <button id="q-add" class="primary">添加</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>从文件导入</h2>
+        <p class="hint">支持 <code>.txt</code>（一行一条）、<code>.md</code>（自动去掉标题行和列表符号）、<code>.csv</code>（按行）、<code>.json</code>（字符串数组，或 <code>{"quotes": [...]}</code>、对象里的 text/quote/content 字段）。UTF-8 或 GBK 编码均可，重复的会自动跳过，超过 200 字的行会被忽略。导入是追加；想覆盖请先「清空全部」。</p>
+        <div class="btns">
+          <label class="primary filebtn">选择文件导入<input type="file" id="q-file" accept=".txt,.md,.csv,.json,text/plain,application/json" hidden /></label>
+          <span id="q-clear-slot"></span>
+        </div>
+        <div id="q-import-result" class="hint"></div>
+      </div>
+      <div class="card">
+        <h2>语录列表</h2>
+        <div class="form inline"><input id="q-search" placeholder="搜索语录" /><button id="q-search-btn" class="ghost">搜索</button></div>
+        <ul id="q-list" class="list"></ul>
+        <div class="btns"><button id="q-more" class="ghost" hidden>加载更多</button></div>
+      </div>
+    </section>
+
+    <!-- 背景与出图 -->
+    <section id="tab-bg" hidden>
+      <div class="card">
+        <h2>出图设置</h2>
+        <label class="switch"><input type="checkbox" id="opt-image" /><span></span>/cx 以图片发送<small>关闭后退回文字；出图失败也会自动退回文字</small></label>
+        <label class="switch"><input type="checkbox" id="opt-quote" /><span></span>显示随机语录<small>在图片标题下方显示一条随机语录；没有语录时不显示</small></label>
+        <label class="switch"><input type="checkbox" id="opt-random" /><span></span>随机背景<small>每次 /cx 从下方背景中随机挑一张；开启后“指定背景”不生效</small></label>
+      </div>
+
+      <div class="card">
+        <h2>背景图</h2>
+        <p class="hint">支持 PNG / JPG / WebP，单张 ≤ 15MB，最多 50 张。上传后会重新压缩保存。没有背景时使用内置深色渐变。点击图片选为指定背景，再点一次取消。</p>
+        <div class="btns">
+          <label class="primary filebtn">上传背景<input type="file" id="bg-file" accept="image/*" hidden /></label>
+          <button id="bg-preview-cur" class="ghost">预览当前设置</button>
+        </div>
+        <div id="bg-grid" class="grid"></div>
+        <div id="bg-empty" class="hint" hidden>还没有上传背景。</div>
+      </div>
+
+      <div class="card" id="preview-card" hidden>
+        <h2>预览</h2>
+        <img id="preview-img" alt="预览" />
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" role="status"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

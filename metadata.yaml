@@ -2,7 +2,7 @@ name: astrbot_plugin_scpsl_a2s
 display_name: SCP:SL 服务器人数查询
 short_desc: 查询 SCP:SL（scplist / A2S）与 Minecraft Java 服务器的人数和版本，出图并带 WebUI 管理页。
 desc: 实时查询已绑定的 SCP:SL 服务器人数（支持 scplist.kr 服务器 ID，或 python-a2s），/cx 本地渲染成图片（Pillow，可自定义背景图 / 随机背景），支持 /cx /bind /bindlist /unbind /op，并自带 WebUI 管理页（服务器、管理员、背景图）。
-version: 1.3.1
+version: 1.4.0
 author: DwR & Claude
 repo: https://example.com/astrbot_plugin_scpsl_a2s
 astrbot_version: ">=4.5.0"

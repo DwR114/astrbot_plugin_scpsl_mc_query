@@ -9,7 +9,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from . import mcping, scplist
+from . import mcping, quotes as quotelib, scplist
 from . import webcompat as web
 from .bg import BgError, BgManager
 from .query import format_report, query_all, query_one
@@ -44,12 +44,14 @@ class ScpslA2SPlugin(Star):
         self._register_web(context)
 
     # ---------- 出图 ----------
-    async def _render(self, results, title=None, bg_image="auto"):
+    async def _render(self, results, title=None, bg_image="auto", quote="auto"):
         settings = await self.store.get_settings()
         if bg_image == "auto":
             bg_image = await asyncio.to_thread(self.bg.pick, settings)
+        if quote == "auto":
+            quote = await self.store.random_quote() if settings.get("show_quote", True) else None
         return await asyncio.to_thread(
-            render_report, results, bg_image, title, self.data_dir
+            render_report, results, bg_image, title, self.data_dir, quote
         )
 
     # ---------- 工具 ----------
@@ -327,6 +329,11 @@ class ScpslA2SPlugin(Star):
             ("backgrounds/upload", self.api_bg_upload, ["POST"], "上传背景图"),
             ("backgrounds/delete", self.api_bg_delete, ["POST"], "删除背景图"),
             ("preview", self.api_preview, ["POST"], "预览出图效果"),
+            ("quotes/list", self.api_quotes_list, ["POST"], "语录列表/搜索"),
+            ("quotes/add", self.api_quotes_add, ["POST"], "添加一条语录"),
+            ("quotes/delete", self.api_quotes_delete, ["POST"], "删除一条语录"),
+            ("quotes/clear", self.api_quotes_clear, ["POST"], "清空语录"),
+            ("quotes/import", self.api_quotes_import, ["POST"], "从文件导入语录"),
         ]
         try:
             for path, handler, methods, desc in routes:
@@ -352,10 +359,12 @@ class ScpslA2SPlugin(Star):
             admins = await self.store.list_admins()
             settings = await self.store.get_settings()
             bgs = await asyncio.to_thread(self._bg_list)
+            quote_count = len(await self.store.list_quotes())
         except (StoreError, BgError) as e:
             return self._bad(str(e))
         return web.json_response({
             "servers": servers, "admins": admins, "settings": settings, "backgrounds": bgs,
+            "quote_count": quote_count,
         })
 
     async def api_server_save(self):
@@ -465,7 +474,7 @@ class ScpslA2SPlugin(Star):
     async def api_settings_save(self):
         p = await web.read_json()
         changes = {}
-        for k in ("use_image", "random_bg"):
+        for k in ("use_image", "random_bg", "show_quote"):
             if k in p:
                 if not isinstance(p[k], bool):
                     return self._bad(f"{k} 必须是布尔值")
@@ -527,13 +536,17 @@ class ScpslA2SPlugin(Star):
         ]
         try:
             bid = p.get("bg_id")
+            settings = await self.store.get_settings()
+            quote = await self.store.random_quote() if settings.get("show_quote", True) else None
+            if quote is None and settings.get("show_quote", True):
+                quote = "这里会显示一条随机语录（还没有导入语录）"
             if bid:
                 img = await asyncio.to_thread(self.bg.load, str(bid))
                 if img is None:
                     return self._bad("所选背景不存在或已损坏。")
-                png = await self._render(sample, "效果预览", img)
+                png = await self._render(sample, "效果预览", img, quote)
             else:
-                png = await self._render(sample, "效果预览")
+                png = await self._render(sample, "效果预览", "auto", quote)
             jpg = await asyncio.to_thread(render_jpeg, png)
         except (BgError, StoreError) as e:
             return self._bad(str(e))
@@ -541,6 +554,77 @@ class ScpslA2SPlugin(Star):
             logger.warning(f"预览出图失败：{type(e).__name__}: {e}")
             return self._bad(f"出图失败：{e}")
         return web.json_response({"image": "data:image/jpeg;base64," + base64.b64encode(jpg).decode()})
+
+    async def api_quotes_list(self):
+        p = await web.read_json()
+        kw = str(p.get("q", "")).strip().lower()[:60]
+        try:
+            offset = max(0, int(p.get("offset", 0)))
+            limit = min(100, max(1, int(p.get("limit", 50))))
+        except (TypeError, ValueError):
+            return self._bad("参数无效")
+        try:
+            allq = await self.store.list_quotes()
+        except StoreError as e:
+            return self._bad(str(e))
+        hit = [t for t in allq if kw in t.lower()] if kw else allq
+        items = [{"id": self.store.quote_id(t), "text": t} for t in hit[offset:offset + limit]]
+        return web.json_response({"items": items, "total": len(hit), "all": len(allq)})
+
+    async def api_quotes_add(self):
+        p = await web.read_json()
+        t = quotelib.clean(p.get("text", ""))
+        if not t:
+            return self._bad("语录不能为空。")
+        if len(t) > quotelib.MAX_LEN:
+            return self._bad(f"语录太长（上限 {quotelib.MAX_LEN} 字）。")
+        try:
+            r = await self.store.add_quotes([t])
+        except StoreError as e:
+            return self._bad(f"保存失败，已有语录未被修改：{e}")
+        if r["too_many"]:
+            return self._bad(f"语录数量已达上限 {self.store.MAX_QUOTES} 条。")
+        return web.json_response({"ok": True, **r})
+
+    async def api_quotes_delete(self):
+        p = await web.read_json()
+        try:
+            ok = await self.store.delete_quote(str(p.get("id", "")))
+        except StoreError as e:
+            return self._bad(f"保存失败：{e}")
+        return web.json_response({"ok": ok})
+
+    async def api_quotes_clear(self):
+        try:
+            n = await self.store.clear_quotes()
+        except StoreError as e:
+            return self._bad(f"保存失败：{e}")
+        return web.json_response({"ok": True, "removed": n})
+
+    async def api_quotes_import(self):
+        """上传 .txt/.md/.csv/.json 导入语录（追加，自动去重）。需要覆盖时先调用 quotes/clear。"""
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.data_dir / f".quotes-{secrets.token_hex(6)}.tmp"
+        try:
+            name = await web.save_upload(tmp)
+            if name is None:
+                return self._bad("没有收到文件（字段名应为 file）。")
+            if tmp.stat().st_size > quotelib.MAX_FILE_BYTES:
+                return self._bad("文件过大（上限 2MB）。")
+            raw = tmp.read_bytes()
+            try:
+                parsed = quotelib.parse(raw, Path(name).name)
+            except quotelib.QuoteError as e:
+                return self._bad(str(e))
+            r = await self.store.add_quotes(parsed["quotes"])
+        except StoreError as e:
+            return self._bad(f"保存失败，已有语录未被修改：{e}")
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return web.json_response({"ok": True, "skipped_long": parsed["skipped_long"], **r})
 
     async def terminate(self):
         pass

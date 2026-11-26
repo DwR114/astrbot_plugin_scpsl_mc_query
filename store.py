@@ -60,6 +60,7 @@ class Store:
         self.servers_path = self.dir / "servers.json"
         self.admins_path = self.dir / "admins.json"
         self.settings_path = self.dir / "settings.json"
+        self.quotes_path = self.dir / "quotes.json"
         self._lock = asyncio.Lock()  # 所有读改写都在同一把锁内，避免并发覆盖
 
     async def _rd(self, path, key, default):
@@ -160,7 +161,7 @@ class Store:
             return {k: dict(v) for k, v in groups.items()}
 
     # ---- 出图设置 ----
-    DEFAULT_SETTINGS = {"use_image": True, "random_bg": False, "selected_bg": None}
+    DEFAULT_SETTINGS = {"use_image": True, "random_bg": False, "selected_bg": None, "show_quote": True}
 
     async def get_settings(self) -> dict:
         async with self._lock:
@@ -179,3 +180,55 @@ class Store:
                     cur[k] = v
             await self._wr(self.settings_path, "settings", cur)
         return await self.get_settings()
+
+    # ---- 随机语录 ----
+    MAX_QUOTES = 5000
+    MAX_QUOTE_LEN = 200
+
+    @staticmethod
+    def quote_id(text: str) -> str:
+        import hashlib
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+    async def list_quotes(self) -> list:
+        async with self._lock:
+            return list(await self._rd(self.quotes_path, "quotes", []))
+
+    async def add_quotes(self, texts: list, replace: bool = False) -> dict:
+        """texts 已由调用方清洗。返回 {added, duplicate, too_many, total}。"""
+        async with self._lock:
+            cur = [] if replace else list(await self._rd(self.quotes_path, "quotes", []))
+            seen = set(cur)
+            added = dup = over = 0
+            for t in texts:
+                if t in seen:
+                    dup += 1
+                elif len(cur) >= self.MAX_QUOTES:
+                    over += 1
+                else:
+                    cur.append(t)
+                    seen.add(t)
+                    added += 1
+            await self._wr(self.quotes_path, "quotes", cur)
+            return {"added": added, "duplicate": dup, "too_many": over, "total": len(cur)}
+
+    async def delete_quote(self, qid: str) -> bool:
+        async with self._lock:
+            cur = list(await self._rd(self.quotes_path, "quotes", []))
+            keep = [t for t in cur if self.quote_id(t) != qid]
+            if len(keep) == len(cur):
+                return False
+            await self._wr(self.quotes_path, "quotes", keep)
+            return True
+
+    async def clear_quotes(self) -> int:
+        async with self._lock:
+            n = len(await self._rd(self.quotes_path, "quotes", []))
+            await self._wr(self.quotes_path, "quotes", [])
+            return n
+
+    async def random_quote(self):
+        import random
+        async with self._lock:
+            cur = await self._rd(self.quotes_path, "quotes", [])
+        return random.choice(cur) if cur else None

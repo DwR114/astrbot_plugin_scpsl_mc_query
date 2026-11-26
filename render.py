@@ -76,6 +76,27 @@ def _default_bg(w, h) -> Image.Image:
     return Image.composite(glow, bg, Image.new("L", (w, h), 70))
 
 
+def _wrap_quote(font, quote, max_w, max_lines=2):
+    """按像素宽度逐字换行，最多 max_lines 行，超出以省略号结尾。"""
+    probe = ImageDraw.Draw(Image.new("RGB", (4, 4)))
+    text = "“" + quote + "”"
+    lines, cur = [], ""
+    for ch in text:
+        if probe.textlength(cur + ch, font=font) > max_w and cur:
+            lines.append(cur)
+            cur = ch
+        else:
+            cur += ch
+    lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and probe.textlength(last + "…”", font=font) > max_w:
+            last = last[:-1]
+        lines[-1] = last + "…”"
+    return lines
+
+
 def _cover(img: Image.Image, w, h) -> Image.Image:
     r = max(w / img.width, h / img.height)
     nw, nh = max(w, round(img.width * r)), max(h, round(img.height * r))
@@ -97,17 +118,20 @@ GREEN, RED, WHITE, GREY = (74, 222, 128), (248, 113, 113), (255, 255, 255), (200
 
 
 def render_report(results: list, background: Image.Image = None, title: str = None,
-                  data_dir: Path = PLUGIN_DIR / "data") -> bytes:
+                  data_dir: Path = PLUGIN_DIR / "data", quote: str = None) -> bytes:
     """results 为 query_all 的返回值。返回 PNG 字节。"""
     if title is None:
         kinds = {r.get("kind") == "mc" for r in results}
         title = "Minecraft 服务器查询" if kinds == {True} else "已配置服务器查询"
+    f_quote = get_font(24, False, data_dir)
     n = max(1, len(results))
     cols = min(n, 3)
     card_h = CARD_H + (26 if any(r.get("version") for r in results) else 0)
     rows = (n + cols - 1) // cols
     W = max(640, MARGIN * 2 + cols * CARD_W + (cols - 1) * GAP)
-    H = HEADER_H + rows * card_h + (rows - 1) * GAP + FOOTER_H + MARGIN // 2
+    qlines = _wrap_quote(f_quote, quote, W - MARGIN * 2) if quote else []
+    hdr = HEADER_H + (len(qlines) * 34 + 8 if qlines else 0)
+    H = hdr + rows * card_h + (rows - 1) * GAP + FOOTER_H + MARGIN // 2
 
     bg = _cover(background, W, H) if background is not None else _default_bg(W, H)
     bg = bg.convert("RGB")
@@ -127,12 +151,15 @@ def render_report(results: list, background: Image.Image = None, title: str = No
     online = sum(1 for r in results if r.get("ok"))
     d.text((MARGIN, 100), f"更新于 {time.strftime('%Y-%m-%d %H:%M:%S')}", font=f_sub, fill=GREY)
 
+    for li, line in enumerate(qlines):
+        d.text((MARGIN, 138 + li * 34), line, font=f_quote, fill=(226, 232, 240, 235))
+
     grid_w = cols * CARD_W + (cols - 1) * GAP
     x0 = (W - grid_w) // 2
     mask = _rounded_mask(CARD_W, card_h, 22)
     for i, r in enumerate(results):
         cx = x0 + (i % cols) * (CARD_W + GAP)
-        cy = HEADER_H + (i // cols) * (card_h + GAP)
+        cy = hdr + (i // cols) * (card_h + GAP)
         # 毛玻璃：背景模糊 + 半透明深色层
         glass = blurred.crop((cx, cy, cx + CARD_W, cy + card_h)).convert("RGBA")
         glass = Image.alpha_composite(glass, Image.new("RGBA", (CARD_W, card_h), (8, 10, 18, 120)))
